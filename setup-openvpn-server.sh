@@ -12,21 +12,16 @@ apt install -y openvpn easy-rsa
 make-cadir ~/openvpn-ca
 cd ~/openvpn-ca
 
-# Set up the Easy-RSA variables
-cat > vars <<EOL
-set_var EASYRSA_REQ_COUNTRY    "US"
-set_var EASYRSA_REQ_PROVINCE   "California"
-set_var EASYRSA_REQ_CITY       "San Francisco"
-set_var EASYRSA_REQ_ORG        "MyOrg"
-set_var EASYRSA_REQ_EMAIL      "admin@example.com"
-set_var EASYRSA_REQ_OU         "MyUnit"
-EOL
-
-# Load variables
-source ./vars
+# Export Easy-RSA variables
+export EASYRSA_REQ_COUNTRY="US"
+export EASYRSA_REQ_PROVINCE="California"
+export EASYRSA_REQ_CITY="San Francisco"
+export EASYRSA_REQ_ORG="MyOrg"
+export EASYRSA_REQ_EMAIL="admin@example.com"
+export EASYRSA_REQ_OU="MyUnit"
 
 # Clean up any previous keys
-./clean-all
+./easyrsa clean-all
 
 # Build the CA
 ./easyrsa build-ca nopass
