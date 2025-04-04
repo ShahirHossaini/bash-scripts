@@ -1,52 +1,51 @@
 #!/bin/bash
 
+# Exit on error
 set -e
 
-# Update system packages
+# Variables
+VPN_DIR="/etc/openvpn"
+EASYRSA_DIR="/etc/openvpn/easy-rsa"
+SERVER_CONF="$VPN_DIR/server.conf"
+
+# Update system
+echo "Updating system..."
 apt update && apt upgrade -y
 
-# Install OpenVPN and Easy-RSA
+# Install OpenVPN and EasyRSA
+echo "Installing OpenVPN and EasyRSA..."
 apt install -y openvpn easy-rsa
 
-# Make the Easy-RSA directory
-make-cadir ~/openvpn-ca
-cd ~/openvpn-ca
+# Setup EasyRSA
+echo "Setting up EasyRSA..."
+make-cadir "$EASYRSA_DIR"
+cd "$EASYRSA_DIR"
 
-# Export Easy-RSA variables
-export EASYRSA_REQ_COUNTRY="US"
-export EASYRSA_REQ_PROVINCE="California"
-export EASYRSA_REQ_CITY="San Francisco"
-export EASYRSA_REQ_ORG="MyOrg"
-export EASYRSA_REQ_EMAIL="admin@example.com"
-export EASYRSA_REQ_OU="MyUnit"
+# Initialize PKI and build CA
+echo "Initializing PKI..."
+./easyrsa init-pki
+echo -ne "\n" | ./easyrsa build-ca nopass
 
-# Clean up any previous keys
-./easyrsa clean-all
+# Generate Server Key Pair
+echo "Generating server key pair..."
+./easyrsa gen-req server nopass
+./easyrsa sign-req server server
 
-# Build the CA
-./easyrsa build-ca nopass
-
-# Generate the server certificate and key
-./easyrsa build-server-full server nopass
-
-# Generate the Diffie-Hellman parameters
+# Generate Diffie-Hellman Parameters
+echo "Generating Diffie-Hellman parameters..."
 ./easyrsa gen-dh
 
-# Generate the client certificate and key
-./easyrsa build-client-full client nopass
+# Copy generated files to OpenVPN directory
+echo "Copying keys and certificates..."
+cp pki/ca.crt pki/issued/server.crt pki/private/server.key pki/dh.pem "$VPN_DIR"
 
-# Generate the CRL (Certificate Revocation List)
-./easyrsa gen-crl
+# Generate TLS-Auth Key
+echo "Generating TLS-Auth key..."
+openvpn --genkey --secret "$VPN_DIR/ta.key"
 
-# Copy the necessary files to the OpenVPN directory
-cp pki/ca.crt /etc/openvpn/
-cp pki/private/server.key /etc/openvpn/
-cp pki/issued/server.crt /etc/openvpn/
-cp pki/dh.pem /etc/openvpn/
-cp pki/crl.pem /etc/openvpn/
-
-# Set up the OpenVPN server configuration
-cat > /etc/openvpn/server.conf <<EOL
+# Create OpenVPN server configuration
+echo "Configuring OpenVPN server..."
+cat > "$SERVER_CONF" <<EOF
 port 1194
 proto udp
 dev tun
@@ -54,8 +53,7 @@ ca ca.crt
 cert server.crt
 key server.key
 dh dh.pem
-auth SHA256
-crl-verify crl.pem
+tls-auth ta.key 0
 server 10.8.0.0 255.255.255.0
 ifconfig-pool-persist ipp.txt
 push "redirect-gateway def1 bypass-dhcp"
@@ -63,54 +61,30 @@ push "dhcp-option DNS 8.8.8.8"
 push "dhcp-option DNS 8.8.4.4"
 keepalive 10 120
 cipher AES-256-CBC
+auth SHA256
+comp-lzo
 persist-key
 persist-tun
 status openvpn-status.log
 log-append /var/log/openvpn.log
 verb 3
-EOL
+EOF
 
 # Enable IP forwarding
-sysctl -w net.ipv4.ip_forward=1
+echo "Enabling IP forwarding..."
+echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+sysctl -p
 
-# Make IP forwarding persistent
-sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf
-
-# Set up UFW rules
+# Configure firewall
+echo "Configuring firewall..."
 ufw allow 1194/udp
 ufw allow OpenSSH
 ufw disable
 ufw enable
 
-# Start and enable the OpenVPN service
-systemctl start openvpn@server
+# Restart OpenVPN service
+echo "Starting OpenVPN service..."
+systemctl restart openvpn@server
 systemctl enable openvpn@server
 
-# Generate a client configuration file
-cat > ~/client.ovpn <<EOL
-client
-dev tun
-proto udp
-remote YOUR_SERVER_IP 1194
-resolv-retry infinite
-nobind
-persist-key
-persist-tun
-remote-cert-tls server
-ca [inline]
-cert [inline]
-key [inline]
-
-<ca>
-$(cat /etc/openvpn/ca.crt)
-</ca>
-<cert>
-$(cat ~/openvpn-ca/pki/issued/client.crt)
-</cert>
-<key>
-$(cat ~/openvpn-ca/pki/private/client.key)
-</key>
-EOL
-
-echo "OpenVPN server installation and configuration completed."
-echo "Client configuration file is saved at ~/client.ovpn. Replace YOUR_SERVER_IP with your server's public IP."
+echo "OpenVPN setup complete!"
